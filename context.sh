@@ -4,7 +4,7 @@
 WORKER_URL="https://make-files-readable-for-ai.milaadfarzian.workers.dev/"
 
 # Check for Python
-if ! command -v python3 &> /dev/null; then
+if ! command -v python3 &gt; /dev/null; then
     echo "Error: python3 is required but not installed."
     exit 1
 fi
@@ -15,6 +15,8 @@ import os
 import json
 import sys
 import urllib.request
+import platform
+import subprocess
 
 # --- CONFIGURATION ---
 WORKER_URL = '${WORKER_URL}'
@@ -41,6 +43,67 @@ IGNORE_EXTS = {
     '.gif', '.ico', '.svg', '.zip', '.tar', '.gz', '.pdf', '.exe', '.dll',
     'package-lock.json', 'yarn.lock', 'bun.lockb', 'pnpm-lock.yaml', 'context.txt'
 }
+
+def get_system_info():
+    \"\"\"Get detailed system information\"\"\"
+    info = []
+    
+    # OS Details
+    info.append(f\"Operating System: {platform.system()} {platform.release()}\")
+    info.append(f\"OS Version: {platform.version()}\")
+    
+    # Python Version
+    info.append(f\"Python Version: {sys.version.split()[0]}\")
+    info.append(f\"Python Executable: {sys.executable}\")
+    
+    # CPU Info
+    try:
+        cpu_count = os.cpu_count()
+        info.append(f\"CPU Cores: {cpu_count}\")
+        
+        # Try to get CPU model (Linux/Mac)
+        if platform.system() == 'Linux':
+            with open('/proc/cpuinfo', 'r') as f:
+                for line in f:
+                    if 'model name' in line:
+                        cpu_model = line.split(':')[1].strip()
+                        info.append(f\"CPU Model: {cpu_model}\")
+                        break
+        elif platform.system() == 'Darwin':  # macOS
+            result = subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True)
+            if result.returncode == 0:
+                info.append(f\"CPU Model: {result.stdout.strip()}\")
+    except:
+        pass
+    
+    # RAM Info
+    try:
+        if platform.system() == 'Linux':
+            with open('/proc/meminfo', 'r') as f:
+                for line in f:
+                    if 'MemTotal' in line:
+                        mem_kb = int(line.split()[1])
+                        mem_gb = mem_kb / (1024 * 1024)
+                        info.append(f\"Total RAM: {mem_gb:.2f} GB\")
+                        break
+        elif platform.system() == 'Darwin':  # macOS
+            result = subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True)
+            if result.returncode == 0:
+                mem_bytes = int(result.stdout.strip())
+                mem_gb = mem_bytes / (1024**3)
+                info.append(f\"Total RAM: {mem_gb:.2f} GB\")
+        elif platform.system() == 'Windows':
+            result = subprocess.run(['wmic', 'ComputerSystem', 'get', 'TotalPhysicalMemory'], capture_output=True, text=True)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                if len(lines) > 1:
+                    mem_bytes = int(lines[1].strip())
+                    mem_gb = mem_bytes / (1024**3)
+                    info.append(f\"Total RAM: {mem_gb:.2f} GB\")
+    except:
+        pass
+    
+    return info
 
 def main():
     print(f'{Colors.CYAN}{Colors.BOLD}🧠 Context CLI{Colors.NC}')
@@ -108,8 +171,20 @@ def main():
         with urllib.request.urlopen(req) as response:
             result_text = response.read().decode('utf-8')
             
-            # 4. WRITE TO FILE
+            # Get system info
+            system_info = get_system_info()
+            
+            # Create header with system info
+            header = \"=\" * 80 + \"\\n\"
+            header += \"SYSTEM INFORMATION\\n\"
+            header += \"=\" * 80 + \"\\n\"
+            for info_line in system_info:
+                header += f\"{info_line}\\n\"
+            header += \"=\" * 80 + \"\\n\\n\"
+            
+            # 4. WRITE TO FILE with system info at the top
             with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+                f.write(header)
                 f.write(result_text)
             
             print(f'\r{Colors.GREEN}✅ Done! Saved to: {Colors.BOLD}{OUTPUT_FILE}{Colors.NC}      ')
