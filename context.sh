@@ -1,461 +1,199 @@
 #!/bin/bash
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Configuration
+WORKER_URL="https://make-files-readable-for-ai.milaadfarzian.workers.dev/"
 
-print_color() {
-    echo -e "${2}${1}${NC}"
+# Check for Python
+if ! command -v python3 &gt; /dev/null; then
+    echo "Error: python3 is required but not installed."
+    exit 1
+fi
+
+# Run the Python logic directly
+python3 -c "
+import os
+import json
+import sys
+import urllib.request
+import platform
+import subprocess
+
+# --- CONFIGURATION ---
+WORKER_URL = '${WORKER_URL}'
+OUTPUT_FILE = 'context.txt'
+
+# --- COLORS ---
+class Colors:
+    CYAN = '\033[0;36m'
+    GREEN = '\033[0;32m'
+    YELLOW = '\033[1;33m'
+    RED = '\033[0;31m'
+    BLUE = '\033[0;34m'
+    BOLD = '\033[1m'
+    NC = '\033[0m'
+
+IGNORE_DIRS = {
+    '.git', 'node_modules', '__pycache__', 'venv', '.venv', 'env', '.env', 
+    'dist', 'build', 'coverage', '.idea', '.vscode', 'target', 'vendor', 
+    '.next', 'out', '.nuxt', 'bin', 'obj', '.cargo', '.github'
 }
 
-print_header() {
-    echo
-    print_color "╔══════════════════════════════════════════════════════════════╗" $PURPLE
-    print_color "║                   🚀 SHORTCUT INSTALLER 🚀                  ║" $PURPLE
-    print_color "║              Adding 50+ sexy shortcuts to your shell        ║" $PURPLE
-    print_color "╚══════════════════════════════════════════════════════════════╝" $PURPLE
-    echo
+IGNORE_EXTS = {
+    '.pyc', '.pyo', '.pyd', '.db', '.sqlite', '.png', '.jpg', '.jpeg', 
+    '.gif', '.ico', '.svg', '.zip', '.tar', '.gz', '.pdf', '.exe', '.dll',
+    'package-lock.json', 'yarn.lock', 'bun.lockb', 'pnpm-lock.yaml', 'context.txt'
 }
 
-print_success() {
-    print_color "✅ $1" $GREEN
-}
-
-print_warning() {
-    print_color "⚠️  $1" $YELLOW
-}
-
-print_info() {
-    print_color "💡 $1" $CYAN
-}
-
-print_error() {
-    print_color "❌ $1" $RED
-}
-
-reload_shell_config() {
-    local config_file=$1
-    print_info "Reloading shell configuration: $config_file"
+def get_system_info():
+    \"\"\"Get detailed system information\"\"\"
+    info = []
     
-    if [ -f "$config_file" ]; then
-        if [ -n "$ZSH_VERSION" ]; then
-            source "$config_file" 2>/dev/null
-        else
-            source "$config_file" 2>/dev/null
-        fi
-        print_success "Shell configuration reloaded successfully!"
-    else
-        print_error "Config file not found: $config_file"
-    fi
-}
+    # OS Details
+    info.append(f\"Operating System: {platform.system()} {platform.release()}\")
+    info.append(f\"OS Version: {platform.version()}\")
+    
+    # Python Version
+    info.append(f\"Python Version: {sys.version.split()[0]}\")
+    info.append(f\"Python Executable: {sys.executable}\")
+    
+    # CPU Info
+    try:
+        cpu_count = os.cpu_count()
+        info.append(f\"CPU Cores: {cpu_count}\")
+        
+        # Try to get CPU model (Linux/Mac)
+        if platform.system() == 'Linux':
+            with open('/proc/cpuinfo', 'r') as f:
+                for line in f:
+                    if 'model name' in line:
+                        cpu_model = line.split(':')[1].strip()
+                        info.append(f\"CPU Model: {cpu_model}\")
+                        break
+        elif platform.system() == 'Darwin':  # macOS
+            result = subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True)
+            if result.returncode == 0:
+                info.append(f\"CPU Model: {result.stdout.strip()}\")
+    except:
+        pass
+    
+    # RAM Info
+    try:
+        if platform.system() == 'Linux':
+            with open('/proc/meminfo', 'r') as f:
+                for line in f:
+                    if 'MemTotal' in line:
+                        mem_kb = int(line.split()[1])
+                        mem_gb = mem_kb / (1024 * 1024)
+                        info.append(f\"Total RAM: {mem_gb:.2f} GB\")
+                        break
+        elif platform.system() == 'Darwin':  # macOS
+            result = subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True)
+            if result.returncode == 0:
+                mem_bytes = int(result.stdout.strip())
+                mem_gb = mem_bytes / (1024**3)
+                info.append(f\"Total RAM: {mem_gb:.2f} GB\")
+        elif platform.system() == 'Windows':
+            result = subprocess.run(['wmic', 'ComputerSystem', 'get', 'TotalPhysicalMemory'], capture_output=True, text=True)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                if len(lines) > 1:
+                    mem_bytes = int(lines[1].strip())
+                    mem_gb = mem_bytes / (1024**3)
+                    info.append(f\"Total RAM: {mem_gb:.2f} GB\")
+    except:
+        pass
+    
+    return info
 
-get_shell_config() {
-    if [ -n "$ZSH_VERSION" ]; then
-        echo "$HOME/.zshrc"
-    elif [ -n "$BASH_VERSION" ]; then
-        echo "$HOME/.bashrc"
-    else
-        echo "$HOME/.bashrc"
-    fi
-}
+def main():
+    print(f'{Colors.CYAN}{Colors.BOLD}🧠 Context CLI{Colors.NC}')
+    print(f'{Colors.CYAN}Scanning directory...{Colors.NC}')
 
-SHELL_CONFIG=$(get_shell_config)
-BACKUP_FILE="${SHELL_CONFIG}.backup.$(date +%Y%m%d_%H%M%S)"
+    payload = {'files': []}
+    file_count = 0
+    dir_count = 0
+    total_size = 0
+    
+    # 1. SCAN FILES
+    for root, dirs, files in os.walk('.'):
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS] # Block ignored folders
+        dir_count += len(dirs)
+        
+        for file in files:
+            if any(file.endswith(ext) for ext in IGNORE_EXTS): continue
+            
+            file_path = os.path.join(root, file)
+            rel_path = os.path.relpath(file_path, '.')
+            if rel_path.startswith('./'): rel_path = rel_path[2:]
+            
+            # Skip the output file itself
+            if rel_path == OUTPUT_FILE: continue
 
-SHORTCUTS=(
-    "alias sc='systemctl'"
-    "alias ssc='sudo systemctl'"
-    "alias scr='systemctl restart'"
-    "alias scs='systemctl status'"
-    "alias sce='systemctl enable'"
-    "alias scd='systemctl disable'"
-    "alias scstart='systemctl start'"
-    "alias scstop='systemctl stop'"
-    "alias scl='systemctl list-units'"
-    "alias sclf='systemctl list-unit-files'"
-    "alias scu='systemctl --user'"
-    "alias jc='journalctl'"
-    "alias jcf='journalctl -f'"
-    "alias t='tmux'"
-    "alias ta='tmux attach'"
-    "alias tn='tmux new-session -s'"
-    "alias tns='tmux new-session -s'"
-    "alias tl='tmux list-sessions'"
-    "alias tk='tmux kill-session -t'"
-    "alias tks='tmux kill-server'"
-    "alias td='tmux detach'"
-    ""
-    "alias ..='cd ..'"
-    "alias ...='cd ../..'"
-    "alias ....='cd ../../..'"
-    "alias ~='cd ~'"
-    "alias c='clear'"
-    "alias cls='clear'"
-    "alias h='history'"
-    "alias ls='ls --color=auto'"
-    "alias ll='ls -alF'"
-    "alias la='ls -A'"
-    "alias l='ls -CF'"
-    "alias ltr='ls -ltr'"
-    "alias rm='rm -i'"
-    "alias cp='cp -i'"
-    "alias mv='mv -i'"
-    ""
-    "alias grep='grep --color=auto'"
-    "alias egrep='egrep --color=auto'"
-    "alias fgrep='fgrep --color=auto'"
-    "alias search='grep -r'"
-    "alias ff='find . -type f -name'"
-    ""
-    "alias df='df -h'"
-    "alias du='du -h'"
-    "alias free='free -h'"
-    "alias meminfo='free -m -l -t'"
-    "alias psg='ps aux | grep'"
-    "alias ports='netstat -tulanp'"
-    ""
-    "alias aptup='sudo apt update && sudo apt upgrade'"
-    "alias aptin='sudo apt install'"
-    "alias aptrm='sudo apt remove'"
-    "alias dnfup='sudo dnf update'"
-    "alias dnfin='sudo dnf install'"
-    "alias dnfrm='sudo dnf remove'"
-    "alias pacup='sudo pacman -Syu'"
-    "alias pacin='sudo pacman -S'"
-    "alias pacrm='sudo pacman -Rs'"
-    ""
-    "alias ip='ip -c'"
-    "alias ips='ip addr show'"
-    "alias myip='curl -s ifconfig.me'"
-    "alias ping='ping -c 5'"
-    "alias wget='wget -c'"
-    ""
-    "alias d='docker'"
-    "alias di='docker images'"
-    "alias dps='docker ps'"
-    "alias dpsa='docker ps -a'"
-    "alias dk='docker kill'"
-    "alias drm='docker rm'"
-    "alias drmi='docker rmi'"
-    "alias dcu='docker-compose up'"
-    "alias dcd='docker-compose down'"
-    ""
-    "alias g='git'"
-    "alias gs='git status'"
-    "alias ga='git add'"
-    "alias gc='git commit'"
-    "alias gcm='git commit -m'"
-    "alias gp='git push'"
-    "alias gpl='git pull'"
-    "alias gco='git checkout'"
-    "alias gb='git branch'"
-    "alias gl='git log --oneline --graph --decorate'"
-    ""
-    "alias python='python3'"
-    "alias pip='pip3'"
-    "alias py='python3'"
-    "alias venv='python3 -m venv'"
-    "alias pmv='python3 -m venv venv'"
-    "alias pfr='pip freeze > requirements.txt'"
-    "alias activate='source venv/bin/activate'"
-    ""
-    "alias ssh='ssh -o ServerAliveInterval=60'"
-    "alias scp='scp -p'"
-    "alias rsync='rsync -avzP'"
-    ""
-    "alias vim='nvim'"
-    "alias editbash='vim ~/.bashrc'"
-    "alias editvim='vim ~/.vimrc'"
-    "alias pstop='ps -ef | head -1; ps -ef | grep'"
-    "alias killp='kill -9'"
-    ""
-    "alias setpanel='bash <(curl -fsSL https://raw.githubusercontent.com/milibots/panel/main/install.sh)'"
-    "alias setssl='sudo bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/milibots/install-ssl/main/ssl-setup.sh)\"'"
-    ""
-    "# Context CLI - AI-powered context manager"
-    "alias context='bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/milibots/context-cli/main/context.sh)\"'"
-    ""
-    "alias crypto='curl -s \"https://cmd.milibots.ir/crypto?format=text\"'"
-    "alias arz='curl -s \"https://cmd.milibots.ir/arz?format=text\"'"
-    "alias coin='curl -s \"https://cmd.milibots.ir/coin?format=text\"'"
-    "alias gold='curl -s \"https://cmd.milibots.ir/gold?format=text\"'"
-    "alias cars='curl -s \"https://cmd.milibots.ir/cars?format=text\"'"
-    "alias phones='curl -s \"https://cmd.milibots.ir/phones?format=text\"'"
-    "alias time='curl -s \"https://cmd.milibots.ir/time?format=text\"'"
-    "alias nowtime='curl -s \"https://cmd.milibots.ir/time?format=text\"'"
-    "alias irantime='curl -s \"https://cmd.milibots.ir/time?format=text\"'"
-    "alias jalali='curl -s \"https://cmd.milibots.ir/time?format=text\"'"
-    "alias allprices='curl -s \"https://cmd.milibots.ir/all\" | lynx -stdin'"
-    ""
-    "cryptodata() {"
-    "    local format=\"\${1:-text}\""
-    "    curl -s \"https://cmd.milibots.ir/crypto?format=\$format\""
-    "}"
-    ""
-    "financial() {"
-    "    local type=\"\${1:-help}\""
-    "    local format=\"\${2:-text}\""
-    "    case \"\$type\" in"
-    "        crypto|arz|coin|gold|cars|phones)"
-    "            curl -s \"https://cmd.milibots.ir/\$type?format=\$format\""
-    "            ;;"
-    "        help)"
-    "            echo \"Usage: financial [crypto|arz|coin|gold|cars|phones] [text|json]\""
-    "            echo \"Examples:\""
-    "            echo \"  financial crypto text\""
-    "            echo \"  financial gold json\""
-    "            echo \"  financial phones\""
-    "            ;;"
-    "        *)"
-    "            echo \"Invalid type. Use: crypto, arz, coin, gold, cars, phones\""
-    "            ;;"
-    "    esac"
-    "}"
-    ""
-    "timedata() {"
-    "    local format=\"\${1:-text}\""
-    "    curl -s \"https://cmd.milibots.ir/time?format=\$format\""
-    "}"
-    ""
-    "prices() {"
-    "    echo \"📊 Available Price Data:\""
-    "    echo \"  crypto  - Cryptocurrency prices\""
-    "    echo \"  arz     - Foreign exchange rates\""
-    "    echo \"  coin    - Coin prices\""
-    "    echo \"  gold    - Gold and precious metals\""
-    "    echo \"  cars    - Car prices\""
-    "    echo \"  phones  - Phone prices\""
-    "    echo \"\""
-    "    echo \"Usage: financial <type> [format]\""
-    "    echo \"Example: financial crypto text\""
-    "}"
-    ""
-    "currenttime() {"
-    "    echo \"🕐 Current Time Commands:\""
-    "    echo \"  time      - Iranian time with all calendars\""
-    "    echo \"  nowtime   - Quick time check\""
-    "    echo \"  irantime  - Iranian calendar time\""
-    "    echo \"  jalali    - Jalali calendar\""
-    "    echo \"  timedata  - Time data with format option\""
-    "    echo \"\""
-    "    echo \"Usage: timedata [text|json]\""
-    "    echo \"Example: timedata json\""
-    "}"
-    ""
-    "alias weather='curl -s wttr.in'"
-    "alias cheat='curl -s cheat.sh'"
-    "alias now='date +\"%T\"'"
-    "alias today='date +\"%Y-%m-%d\"'"
-    ""
-    "alias mkdir='mkdir -pv'"
-    "alias diff='colordiff'"
-    "alias size='du -sh'"
-    ""
-    "extract() {"
-    "    if [ -f \$1 ] ; then"
-    "        case \$1 in"
-    "            *.tar.bz2)   tar xjf \$1     ;;"
-    "            *.tar.gz)    tar xzf \$1     ;;"
-    "            *.bz2)       bunzip2 \$1     ;;"
-    "            *.rar)       unrar e \$1     ;;"
-    "            *.gz)        gunzip \$1      ;;"
-    "            *.tar)       tar xf \$1      ;;"
-    "            *.tbz2)      tar xjf \$1     ;;"
-    "            *.tgz)       tar xzf \$1     ;;"
-    "            *.zip)       unzip \$1       ;;"
-    "            *.Z)         uncompress \$1  ;;"
-    "            *.7z)        7z x \$1        ;;"
-    "            *)     echo \"'\$1' cannot be extracted via extract()\" ;;"
-    "        esac"
-    "    else"
-    "        echo \"'\$1' is not a valid file\""
-    "    fi"
-    "}"
-    ""
-    "dsize() {"
-    "    local path=\"\${1:-.}\""
-    "    local depth=\"\${2:-1}\""
-    "    du -h --max-depth=\"\$depth\" \"\$path\" | sort -hr"
-    "}"
-    ""
-    "findlarge() {"
-    "    local path=\"\${1:-.}\""
-    "    local size=\"\${2:-100M}\""
-    "    find \"\$path\" -type f -size \"+\$size\" -exec ls -lh {} \\; | awk '{ print \$9 \": \" \$5 }'"
-    "}"
-    ""
-    "sysinfo() {"
-    "    echo \"=== System Information ===\""
-    "    echo \"Hostname: \$(hostname)\""
-    "    echo \"Uptime: \$(uptime -p)\""
-    "    echo \"OS: \$(grep PRETTY_NAME /etc/os-release | cut -d='\"' -f2)\""
-    "    echo \"Kernel: \$(uname -r)\""
-    "    echo \"CPU: \$(grep 'model name' /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)\""
-    "    echo \"Memory: \$(free -h | grep Mem: | awk '{print \$2}')\""
-    "    echo \"Disk:\""
-    "    df -h / | tail -1 | awk '{print \"  Total: \" \$2 \", Used: \" \$3 \", Free: \" \$4}'"
-    "}"
-)
+            try:
+                # 1MB limit per file
+                if os.path.getsize(file_path) > 1024 * 1024: continue
 
-print_header
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    # Skip binary files if any slipped through
+                    if '\\0' in content: continue 
+                    
+                    payload['files'].append({'path': rel_path, 'content': content})
+                    file_count += 1
+                    total_size += len(content)
+            except:
+                pass
 
-if [ "$EUID" -eq 0 ]; then
-    print_warning "You are running as root! This will install shortcuts for root user."
-    print_warning "If you want shortcuts for your regular user, run without sudo."
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        print_error "Installation cancelled. Run without sudo for user installation."
-        exit 1
-    fi
-fi
+    if file_count == 0:
+        print(f'{Colors.RED}No valid files found.{Colors.NC}')
+        sys.exit(1)
 
-if [ ! -f "$SHELL_CONFIG" ]; then
-    print_warning "Shell config $SHELL_CONFIG not found, creating it..."
-    touch "$SHELL_CONFIG"
-fi
+    est_tokens = int(total_size / 4)
+    size_kb = total_size / 1024
 
-print_info "Creating backup: $BACKUP_FILE"
-cp "$SHELL_CONFIG" "$BACKUP_FILE"
-print_success "Backup created successfully"
+    # 2. PRINT SUMMARY
+    print(f'\n{Colors.BOLD}📊 Codebase Summary:{Colors.NC}')
+    print(f'   {Colors.BLUE}📁 Folders:{Colors.NC} {dir_count}')
+    print(f'   {Colors.BLUE}📄 Files:{Colors.NC}   {file_count}')
+    print(f'   {Colors.BLUE}💾 Size:{Colors.NC}    {size_kb:.1f} KB')
+    print(f'   {Colors.BLUE}🔢 Tokens:{Colors.NC}  ~{est_tokens:,}')
+    print(f'')
 
-print_info "Removing existing shortcuts section if present..."
-sed -i '/# ============================================================================/,/# 🎯 END OF SHORTCUTS/d' "$SHELL_CONFIG"
+    # 3. UPLOAD AND SAVE
+    print(f'{Colors.YELLOW}⚡ Fetching formatted context...{Colors.NC}', end='', flush=True)
+    
+    try:
+        json_data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(WORKER_URL, data=json_data, method='POST')
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('User-Agent', 'Context-CLI/3.0')
 
-echo "" >> "$SHELL_CONFIG"
-echo "# ============================================================================" >> "$SHELL_CONFIG"
-echo "# 🚀 CUSTOM SHORTCUTS - INSTALLED $(date) " >> "$SHELL_CONFIG"
-echo "# ============================================================================" >> "$SHELL_CONFIG"
-echo "" >> "$SHELL_CONFIG"
+        with urllib.request.urlopen(req) as response:
+            result_text = response.read().decode('utf-8')
+            
+            # Get system info
+            system_info = get_system_info()
+            
+            # Create header with system info
+            header = \"=\" * 80 + \"\\n\"
+            header += \"SYSTEM INFORMATION\\n\"
+            header += \"=\" * 80 + \"\\n\"
+            for info_line in system_info:
+                header += f\"{info_line}\\n\"
+            header += \"=\" * 80 + \"\\n\\n\"
+            
+            # 4. WRITE TO FILE with system info at the top
+            with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+                f.write(header)
+                f.write(result_text)
+            
+            print(f'\r{Colors.GREEN}✅ Done! Saved to: {Colors.BOLD}{OUTPUT_FILE}{Colors.NC}      ')
+            print(f'{Colors.CYAN}   Path: {os.path.abspath(OUTPUT_FILE)}{Colors.NC}')
 
-print_info "Installing all shortcuts to $SHELL_CONFIG..."
+    except Exception as e:
+        print(f'\n{Colors.RED}Error: {e}{Colors.NC}')
+        sys.exit(1)
 
-added_count=0
-for line in "${SHORTCUTS[@]}"; do
-    echo "$line" >> "$SHELL_CONFIG"
-    if [[ "$line" == alias* ]] || [[ "$line" == *"()"* ]]; then
-        ((added_count++))
-    fi
-done
-
-echo "" >> "$SHELL_CONFIG"
-echo "# 🎯 END OF SHORTCUTS" >> "$SHELL_CONFIG"
-echo "# ============================================================================" >> "$SHELL_CONFIG"
-
-print_success "Successfully added $added_count shortcuts and functions"
-
-print_info "Applying shortcuts to current session..."
-reload_shell_config "$SHELL_CONFIG"
-
-print_info "Verifying installation..."
-
-if grep -q "alias crypto=" "$SHELL_CONFIG"; then
-    print_success "✓ Financial shortcuts installed"
-else
-    print_error "✗ Financial shortcuts missing!"
-fi
-
-if grep -q "alias scs=" "$SHELL_CONFIG"; then
-    print_success "✓ Systemctl shortcuts installed"
-else
-    print_error "✗ Systemctl shortcuts missing!"
-fi
-
-if grep -q "alias time=" "$SHELL_CONFIG"; then
-    print_success "✓ Time shortcuts installed"
-else
-    print_error "✗ Time shortcuts missing!"
-fi
-
-if grep -q "alias context=" "$SHELL_CONFIG"; then
-    print_success "✓ Context CLI shortcuts installed"
-else
-    print_error "✗ Context CLI shortcuts missing!"
-fi
-
-print_info "Testing shortcuts functionality..."
-
-if alias crypto >/dev/null 2>&1; then
-    print_success "✓ 'crypto' command is working"
-else
-    print_warning "⚠ 'crypto' command not available in current session"
-fi
-
-if alias scs >/dev/null 2>&1; then
-    print_success "✓ 'scs' command is working"
-else
-    print_warning "⚠ 'scs' command not available in current session"
-fi
-
-if alias time >/dev/null 2>&1; then
-    print_success "✓ 'time' command is working"
-else
-    print_warning "⚠ 'time' command not available in current session"
-fi
-
-if alias context >/dev/null 2>&1; then
-    print_success "✓ 'context' command is working"
-else
-    print_warning "⚠ 'context' command not available in current session"
-fi
-
-echo
-print_color "🎉 Installation Complete!" $GREEN
-echo
-print_color "📖 Your new shortcuts are ready:" $CYAN
-echo
-print_color "Try these commands:" $YELLOW
-print_color "  context       # AI-powered context manager for your terminal" $BLUE
-print_color "  crypto        # Cryptocurrency prices" $BLUE
-print_color "  arz           # Foreign exchange rates" $BLUE
-print_color "  gold          # Gold prices" $BLUE
-print_color "  time          # Iranian time with all calendars" $BLUE
-print_color "  scs nginx     # System status (if nginx installed)" $BLUE
-print_color "  myip          # Show your public IP" $BLUE
-print_color "  weather       # Current weather" $BLUE
-print_color "  pfr           # Create requirements.txt from pip freeze" $BLUE
-print_color "  pmv           # Create Python virtual environment" $BLUE
-print_color "  cls           # Clear screen" $BLUE
-print_color "  setpanel      # Install milibots panel" $BLUE
-print_color "  setssl        # Setup SSL certificates" $BLUE
-echo
-print_color "💰 FINANCIAL DATA COMMANDS:" $PURPLE
-print_color "  financial crypto text    # Crypto prices in console format" $CYAN
-print_color "  financial gold json      # Gold prices in JSON" $CYAN
-print_color "  prices                   # Show all available price types" $CYAN
-echo
-print_color "🕐 TIME COMMANDS:" $PURPLE
-print_color "  time          # Iranian time with all calendars" $CYAN
-print_color "  nowtime       # Quick time check" $CYAN
-print_color "  irantime      # Iranian calendar time" $CYAN
-print_color "  jalali        # Jalali calendar" $CYAN
-print_color "  timedata json # Time data in JSON format" $CYAN
-print_color "  currenttime   # Show all time commands" $CYAN
-echo
-print_color "🐍 PYTHON COMMANDS:" $PURPLE
-print_color "  pmv           # python -m venv venv" $CYAN
-print_color "  pfr           # pip freeze > requirements.txt" $CYAN
-print_color "  activate      # source venv/bin/activate" $CYAN
-echo
-print_color "🔧 INSTALLATION COMMANDS:" $PURPLE
-print_color "  setpanel      # Install milibots panel" $CYAN
-print_color "  setssl        # Setup SSL certificates" $CYAN
-echo
-print_color "🤖 CONTEXT CLI:" $PURPLE
-print_color "  context       # AI-powered context manager" $CYAN
-print_color "  context --help # Show help for context CLI" $CYAN
-echo
-print_color "📊 Installation Summary:" $YELLOW
-print_color "  Config file: $SHELL_CONFIG" $BLUE
-print_color "  Backup: $BACKUP_FILE" $BLUE
-print_color "  Shortcuts installed: $added_count" $GREEN
-echo
-print_color "🔧 If any command doesn't work immediately, open a new terminal or run:" $YELLOW
-print_color "   source $SHELL_CONFIG" $YELLOW
-echo
-print_color "💡 To verify all shortcuts, check:" $CYAN
-print_color "   grep 'alias' $SHELL_CONFIG | wc -l" $BLUE
+if __name__ == '__main__':
+    main()
+"
