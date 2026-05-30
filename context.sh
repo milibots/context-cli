@@ -3,7 +3,7 @@
 OUTPUT_FILE="context.txt"
 
 if ! command -v python3 >/dev/null; then
-    echo "Error: python3 is required"
+    echo "Error: python3 is required but not installed."
     exit 1
 fi
 
@@ -26,11 +26,11 @@ IGNORE_EXTS = {
 
 def system_info():
     return [
-        f"OS: {platform.system()} {platform.release()}",
-        f"Version: {platform.version()}",
-        f"Python: {sys.version.split()[0]}",
-        f"Executable: {sys.executable}",
-        f"Cores: {os.cpu_count()}"
+        f"Operating System: {platform.system()} {platform.release()}",
+        f"OS Version: {platform.version()}",
+        f"Python Version: {sys.version.split()[0]}",
+        f"Python Executable: {sys.executable}",
+        f"CPU Cores: {os.cpu_count()}"
     ]
 
 def generate_tree(paths):
@@ -110,5 +110,6 @@ for f in files:
 with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
     f.write("\n".join(out))
 
-print(f"Done: {os.path.abspath(OUTPUT_FILE)}")
+print(f"✅ Done! Saved to: {OUTPUT_FILE}")
+print(f"   Path: {os.path.abspath(OUTPUT_FILE)}")
 EOF
