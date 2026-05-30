@@ -1,18 +1,30 @@
 #!/bin/bash
 
-OUTPUT_FILE="context.txt"
-
+# Ensure python3 is installed
 if ! command -v python3 >/dev/null; then
-    echo "Error: python3 is required but not installed."
+    echo "❌ Error: python3 is required but not installed."
     exit 1
 fi
 
-python3 - <<'EOF'
+# Ensure curl is installed for uploading
+if ! command -v curl >/dev/null; then
+    echo "❌ Error: curl is required for uploading but not installed."
+    exit 1
+fi
+
+# Generate a 10-character random alphanumeric string for the filename
+RANDOM_NAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 10)
+OUTPUT_FILE="${RANDOM_NAME}.txt"
+
+echo "⏳ Gathering context into ${OUTPUT_FILE}..."
+
+# Pass the dynamic filename into the Python script
+python3 - "$OUTPUT_FILE" <<'EOF'
 import os
 import sys
 import platform
 
-OUTPUT_FILE = "context.txt"
+OUTPUT_FILE = sys.argv[1]
 
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", "venv", ".venv", "env", ".env",
@@ -21,7 +33,7 @@ IGNORE_DIRS = {
 
 IGNORE_EXTS = {
     ".pyc", ".pyo", ".pyd", ".db", ".sqlite", ".png", ".jpg", ".jpeg", ".gif",
-    ".ico", ".svg", ".zip", ".tar", ".gz", ".pdf", ".exe", ".dll", "context.txt"
+    ".ico", ".svg", ".zip", ".tar", ".gz", ".pdf", ".exe", ".dll", "context.txt", OUTPUT_FILE
 }
 
 def system_info():
@@ -110,6 +122,36 @@ for f in files:
 with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
     f.write("\n".join(out))
 
-print(f"✅ Done! Saved to: {OUTPUT_FILE}")
-print(f"   Path: {os.path.abspath(OUTPUT_FILE)}")
+print(f"✅ Local file ready: {os.path.abspath(OUTPUT_FILE)}")
 EOF
+
+# Ensure the file was created successfully before attempting an upload
+if [ ! -f "$OUTPUT_FILE" ]; then
+    echo "❌ Error: Failed to generate $OUTPUT_FILE"
+    exit 1
+fi
+
+echo "☁️  Uploading ${OUTPUT_FILE} to files.imeow.ir..."
+
+# Execute the upload request with curl
+RESPONSE=$(curl -s -X POST \
+  -H "Referrer-Policy: strict-origin-when-cross-origin" \
+  -F "file=@${OUTPUT_FILE}" \
+  -F "bucket=default" \
+  https://files.imeow.ir/upload)
+
+# Parse the JSON response safely using Python to get the `success` boolean and `download_url` string
+SUCCESS=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('success', False))" <<< "$RESPONSE")
+
+if [ "$SUCCESS" = "True" ]; then
+    DOWNLOAD_PATH=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('download_url', ''))" <<< "$RESPONSE")
+    FULL_URL="https://files.imeow.ir${DOWNLOAD_PATH}"
+    
+    echo "============================================================"
+    echo "🎉 Upload Successful!"
+    echo "🔗 Download URL: ${FULL_URL}"
+    echo "============================================================"
+else
+    echo "❌ Upload Failed!"
+    echo "   Server Response: $RESPONSE"
+fi
