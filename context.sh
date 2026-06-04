@@ -140,24 +140,9 @@ print(f"DONE {len(files)}")
 EOF
 
 if [ ! -f "$OUTPUT_FILE" ]; then
-    print_error "Failed"
+    print_error "Failed to generate output file"
     exit 1
 fi
 
 FILE_SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
-print_info "Uploading..."
-
-RESPONSE=$(curl -s -X POST \
-  -F "file=@${OUTPUT_FILE}" \
-  -F "bucket=default" \
-  https://files.imeow.ir/upload)
-
-SUCCESS=$(python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('success',False))" <<< "$RESPONSE")
-
-if [ "$SUCCESS" = "True" ] || [ "$SUCCESS" = "true" ]; then
-    URL=$(python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('download_url',''))" <<< "$RESPONSE")
-    echo "OK https://files.imeow.ir$URL"
-else
-    echo "FAILED $RESPONSE"
-    exit 1
-fi
+print_success "Generated $OUTPUT_FILE (Size: $FILE_SIZE, Files: $(grep -c "^==" "$OUTPUT_FILE" 2>/dev/null || echo "0"))"
