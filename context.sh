@@ -49,6 +49,7 @@ print_info "Generating $OUTPUT_FILE..."
 python3 - "$OUTPUT_FILE" <<'EOF'
 import os
 import sys
+import re
 import platform
 
 OUTPUT_FILE = sys.argv[1]
@@ -110,7 +111,7 @@ IGNORE_DIRS = {
     ".terraform", "terraform.tfstate", ".serverless",
 }
 
-# All file extensions to ignore/skip
+# All static file extensions to ignore/skip
 IGNORE_EXTS = {
     # Backup & temporary copies
     ".bak", ".backup", ".back", ".old", ".orig", ".original",
@@ -181,6 +182,10 @@ IGNORE_EXTS = {
     ".map", ".js.map", ".css.map",
 }
 
+# Regex pattern for timestamped/suffixed backups like:
+# .bak_sp_20260925_164752, .bak.2024, .backup_123, etc.
+BACKUP_REGEX = re.compile(r'\.(bak|backup|old|orig)(_[a-zA-Z0-9_\-]+|\.[0-9]+|\.[a-zA-Z0-9_\-]+)?$', re.IGNORECASE)
+
 MAX_FILE_SIZE = 1024 * 1024  # 1MB
 
 def system_info():
@@ -225,32 +230,38 @@ def should_ignore_path(path):
     path_lower = path.lower()
     filename = os.path.basename(path_lower)
     
-    # Skip backup and temporary file patterns
-    # e.g., file.bak, file.backup, file.bak.js, file~, #file#
+    # 1. Catch regex backup patterns (e.g. .bak_sp_..., .backup_..., .bak.1)
+    if BACKUP_REGEX.search(filename):
+        return True
+
+    # 2. Catch generic backup substrings anywhere in the filename
+    backup_markers = ('.bak_', '.backup_', '.bak.', '.backup.', '.old.', '.orig.')
+    if any(marker in filename for marker in backup_markers):
+        return True
+
+    # 3. Standard backup extensions / swap markers
     backup_suffixes = ('.bak', '.backup', '.back', '.old', '.orig', '.original', '.save', '.copy', '~')
     if any(filename.endswith(sfx) for sfx in backup_suffixes):
         return True
     if filename.startswith('#') and filename.endswith('#'):
         return True
-    if any(pat in filename for pat in ['.bak.', '.backup.', '.old.', '.orig.']):
-        return True
     
-    # Check for font files by extension
+    # 4. Check for font files by extension
     font_exts = ('.ttf', '.otf', '.woff', '.woff2', '.eot', '.fon', '.fnt', '.bdf', '.pcf', '.psf', '.sfd', '.ufo')
     if any(filename.endswith(ext) for ext in font_exts):
         return True
     
-    # Check for byte files
+    # 5. Check for byte files
     byte_exts = ('.pyc', '.pyo', '.pyd', '.so', '.dll', '.dylib')
     if any(filename.endswith(ext) for ext in byte_exts):
         return True
     
-    # Check for cache files
+    # 6. Check for cache files
     cache_exts = ('.cache', '.cached', '.tmp', '.temp', '.swp', '.swo')
     if any(filename.endswith(ext) for ext in cache_exts):
         return True
     
-    # Check for venv patterns in directories
+    # 7. Check for venv patterns in directory paths
     parts = set(path_lower.split(os.sep))
     venv_patterns = {'venv', '.venv', 'env', '.env', 'virtualenv', '.virtualenv'}
     if not parts.isdisjoint(venv_patterns):
@@ -263,10 +274,15 @@ paths = []
 
 for root, dirs, fs in os.walk("."):
     # Filter directories in-place
-    dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.lower().endswith(('.bak', '.backup', '.old'))]
+    dirs[:] = [
+        d for d in dirs 
+        if d not in IGNORE_DIRS 
+        and not d.lower().endswith(('.bak', '.backup', '.old'))
+        and not BACKUP_REGEX.search(d.lower())
+    ]
     
     for f in fs:
-        # Prevent appending the output file itself
+        # Prevent reading the output file itself
         if f == OUTPUT_FILE:
             continue
             
@@ -280,7 +296,7 @@ for root, dirs, fs in os.walk("."):
         
         path = os.path.join(root, f)
         
-        # Additional path and pattern-based checks
+        # Additional path and pattern-based checks (catches .bak_sp_*)
         if should_ignore_path(path):
             continue
         
