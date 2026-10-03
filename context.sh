@@ -98,10 +98,12 @@ IGNORE_DIRS = {
     # OS
     ".DS_Store", "Thumbs.db", "desktop.ini",
     
+    # Backups & Old copies
+    "backup", "backups", ".backup", ".backups", "bak", ".bak", "old", "_old",
+    
     # Misc
     "logs", "log", "tmp", "temp", ".tmp", ".temp",
     ".cache", "cache", "caches",
-    "backup", "backups", ".backup",
     "coverage", "htmlcov",
     "reports", "test-reports",
     "generated", "gen", "deps", "dependencies",
@@ -110,11 +112,15 @@ IGNORE_DIRS = {
 
 # All file extensions to ignore/skip
 IGNORE_EXTS = {
+    # Backup & temporary copies
+    ".bak", ".backup", ".back", ".old", ".orig", ".original",
+    ".save", ".saved", ".copy", "~", ".swp", ".swo",
+    
     # Python bytecode
     ".pyc", ".pyo", ".pyd", ".so", ".dll", ".dylib",
     
     # Cache files
-    ".cache", ".cached", ".tmp", ".temp", ".swp", ".swo",
+    ".cache", ".cached", ".tmp", ".temp",
     
     # Font files (all formats)
     ".ttf", ".otf", ".woff", ".woff2", ".eot", ".fon",
@@ -163,7 +169,7 @@ IGNORE_EXTS = {
     ".dockerignore", ".docker",
     
     # Session/temp files
-    ".session", ".session-journal", ".session-joundala", ".cache",
+    ".session", ".session-journal", ".session-joundala",
     
     # IDE specific
     ".iml", ".ipr", ".iws", ".classpath", ".project",
@@ -173,9 +179,6 @@ IGNORE_EXTS = {
     ".min.js", ".min.css", ".bundle.js", ".bundle.css",
     ".chunk.js", ".chunk.css", ".chunk.map",
     ".map", ".js.map", ".css.map",
-    
-    # Font file extension patterns
-    "*.ttf", "*.otf", "*.woff", "*.woff2", "*.eot", "*.fon", "*.fnt",
 }
 
 MAX_FILE_SIZE = 1024 * 1024  # 1MB
@@ -203,12 +206,10 @@ def is_binary_content(content):
     """Check if content appears to be binary"""
     if not content:
         return False
-    # Check if file contains null bytes or high percentage of non-printable chars
     sample = content[:1024]
     null_count = sample.count('\x00')
     if null_count > 0:
         return True
-    # Check for unusual character distribution
     printable = sum(32 <= ord(c) <= 126 or c in '\n\r\t' for c in sample)
     if len(sample) > 0 and printable / len(sample) < 0.7:
         return True
@@ -222,24 +223,38 @@ def is_huge_json(path, content):
 def should_ignore_path(path):
     """Check if path should be ignored based on patterns"""
     path_lower = path.lower()
+    filename = os.path.basename(path_lower)
+    
+    # Skip backup and temporary file patterns
+    # e.g., file.bak, file.backup, file.bak.js, file~, #file#
+    backup_suffixes = ('.bak', '.backup', '.back', '.old', '.orig', '.original', '.save', '.copy', '~')
+    if any(filename.endswith(sfx) for sfx in backup_suffixes):
+        return True
+    if filename.startswith('#') and filename.endswith('#'):
+        return True
+    if any(pat in filename for pat in ['.bak.', '.backup.', '.old.', '.orig.']):
+        return True
     
     # Check for font files by extension
-    if any(path_lower.endswith(ext) for ext in ['.ttf', '.otf', '.woff', '.woff2', '.eot', '.fon', '.fnt', '.bdf', '.pcf', '.psf', '.sfd', '.ufo']):
+    font_exts = ('.ttf', '.otf', '.woff', '.woff2', '.eot', '.fon', '.fnt', '.bdf', '.pcf', '.psf', '.sfd', '.ufo')
+    if any(filename.endswith(ext) for ext in font_exts):
         return True
     
     # Check for byte files
-    if any(path_lower.endswith(ext) for ext in ['.pyc', '.pyo', '.pyd', '.so', '.dll', '.dylib']):
+    byte_exts = ('.pyc', '.pyo', '.pyd', '.so', '.dll', '.dylib')
+    if any(filename.endswith(ext) for ext in byte_exts):
         return True
     
     # Check for cache files
-    if any(path_lower.endswith(ext) for ext in ['.cache', '.cached', '.tmp', '.temp', '.swp', '.swo']):
+    cache_exts = ('.cache', '.cached', '.tmp', '.temp', '.swp', '.swo')
+    if any(filename.endswith(ext) for ext in cache_exts):
         return True
     
-    # Check for venv patterns
-    venv_patterns = ['venv', '.venv', 'env', '.env', 'virtualenv', '.virtualenv']
-    for pattern in venv_patterns:
-        if pattern in path.split(os.sep):
-            return True
+    # Check for venv patterns in directories
+    parts = set(path_lower.split(os.sep))
+    venv_patterns = {'venv', '.venv', 'env', '.env', 'virtualenv', '.virtualenv'}
+    if not parts.isdisjoint(venv_patterns):
+        return True
     
     return False
 
@@ -247,21 +262,25 @@ files = []
 paths = []
 
 for root, dirs, fs in os.walk("."):
-    # Filter directories
-    dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+    # Filter directories in-place
+    dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.lower().endswith(('.bak', '.backup', '.old'))]
     
     for f in fs:
+        # Prevent appending the output file itself
+        if f == OUTPUT_FILE:
+            continue
+            
         # Skip specific files
         if f in {".env", "package-lock.json", "yarn.lock", "composer.lock"}:
             continue
         
-        # Skip by extension
+        # Skip by explicit extension
         if any(f.lower().endswith(ext) for ext in IGNORE_EXTS):
             continue
         
         path = os.path.join(root, f)
         
-        # Additional path-based checks
+        # Additional path and pattern-based checks
         if should_ignore_path(path):
             continue
         
